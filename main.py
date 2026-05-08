@@ -64,11 +64,12 @@ class Shoe:
         random.shuffle(self.cards)
         self.running_count = 0
 
-    def draw(self):
+    def draw(self, include_count=True):
         if len(self.cards) < (self.num_decks * 52 * self.reshuffle_penetration):
             self.build_shoe()
         card = self.cards.pop()
-        self.running_count += card.get_count_value()
+        if include_count:
+            self.running_count += card.get_count_value()
         return card
 
 # --- Strategy Engine ---
@@ -199,11 +200,12 @@ class BlackjackApp:
         self.insurance_taken = None
         self.insurance_prompt = ""
         self.show_count = True 
+        self.dealer_hole_counted = True
 
         # Monte Carlo State
         self.mc_bankroll = []
         self.mc_running = False
-        self.mc_hands_to_play = 10000
+        self.mc_hands_to_play = 500000
         self.mc_penetration = 0.75
 
         # Buttons
@@ -232,7 +234,8 @@ class BlackjackApp:
     def start_hand(self):
         self.p_hands = [[self.shoe.draw(), self.shoe.draw()]]
         self.active_hand_idx = 0
-        self.d_hand = [self.shoe.draw(), self.shoe.draw()]
+        self.d_hand = [self.shoe.draw(), self.shoe.draw(include_count=False)]
+        self.dealer_hole_counted = False
         self.game_over = False
         self.feedback = ""
         self.result_texts = []
@@ -240,6 +243,11 @@ class BlackjackApp:
         self.insurance_taken = None
         self.insurance_prompt = self.get_insurance_advice_text() if self.insurance_available else ""
         self.check_dealer_blackjack()
+
+    def reveal_dealer_hole_card(self):
+        if not self.dealer_hole_counted and len(self.d_hand) > 1:
+            self.shoe.running_count += self.d_hand[1].get_count_value()
+            self.dealer_hole_counted = True
 
     def get_insurance_advice_text(self):
         tc = self.shoe.get_true_count()
@@ -249,6 +257,7 @@ class BlackjackApp:
     def check_dealer_blackjack(self):
         if self.d_hand[0].rank == 'A': return
         if self.d_hand[0].get_value() == 10 and is_blackjack(self.d_hand):
+            self.reveal_dealer_hole_card()
             self.game_over = True
             self.evaluate_all_hands()
 
@@ -257,6 +266,7 @@ class BlackjackApp:
         self.insurance_available = False
         self.insurance_prompt = ""
         if is_blackjack(self.d_hand):
+            self.reveal_dealer_hole_card()
             self.game_over = True
             self.evaluate_all_hands()
         elif take:
@@ -313,6 +323,7 @@ class BlackjackApp:
 
     def resolve_dealer(self):
         self.game_over = True
+        self.reveal_dealer_hole_card()
         # Only draw if at least one hand hasn't busted
         needs_dealer_draw = any(get_hand_value(h) <= 21 for h in self.p_hands)
         if needs_dealer_draw:
@@ -361,13 +372,14 @@ class BlackjackApp:
             tc = sim_shoe.get_true_count()
             tc_floor = math.floor(tc) 
             
-            if tc_floor <= 0: bet = 10
-            elif tc_floor == 1: bet = 100
-            elif tc_floor == 2: bet = 200
-            elif tc_floor == 3: bet = 300
-            else: bet = 400
+            if tc_floor <= 0: bet = 1000
+            elif tc_floor == 1: bet = 1000
+            elif tc_floor == 2: bet = 5000
+            elif tc_floor == 3: bet = 5000
+            else: bet = 5000
 
-            d_hand = [sim_shoe.draw(), sim_shoe.draw()]
+            d_hand = [sim_shoe.draw(), sim_shoe.draw(include_count=False)]
+            dealer_hole_counted = False
             dealer_blackjack = is_blackjack(d_hand)
 
             if d_hand[0].rank == 'A' and should_take_insurance(tc):
@@ -379,11 +391,17 @@ class BlackjackApp:
 
             # Process Initial Blackjack
             if is_blackjack(hands_to_play[0][0]):
+                if not dealer_hole_counted:
+                    sim_shoe.running_count += d_hand[1].get_count_value()
+                    dealer_hole_counted = True
                 if not dealer_blackjack: bankroll += bet * 1.5
                 self.mc_bankroll.append(bankroll)
                 continue
             
             if dealer_blackjack:
+                if not dealer_hole_counted:
+                    sim_shoe.running_count += d_hand[1].get_count_value()
+                    dealer_hole_counted = True
                 bankroll -= bet
                 self.mc_bankroll.append(bankroll)
                 continue
@@ -426,6 +444,9 @@ class BlackjackApp:
 
             # Dealer playout
             d_val = get_hand_value(d_hand)
+            if not dealer_hole_counted:
+                sim_shoe.running_count += d_hand[1].get_count_value()
+                dealer_hole_counted = True
             if any(get_hand_value(h[0]) <= 21 for h in final_hands):
                 while get_hand_value(d_hand) < 17:
                     d_hand.append(sim_shoe.draw())
@@ -611,7 +632,7 @@ class BlackjackApp:
                 elif self.btn_mc_hands_minus.is_clicked(event):
                     self.mc_hands_to_play = max(1000, self.mc_hands_to_play - 1000)
                 elif self.btn_mc_hands_plus.is_clicked(event):
-                    self.mc_hands_to_play = min(50000, self.mc_hands_to_play + 1000)
+                    self.mc_hands_to_play = min(500000, self.mc_hands_to_play + 10000)
                 elif self.btn_mc_pen_minus.is_clicked(event):
                     self.mc_penetration = max(0.60, self.mc_penetration - 0.05)
                 elif self.btn_mc_pen_plus.is_clicked(event):
